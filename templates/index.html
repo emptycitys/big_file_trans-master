@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta http-equiv="content-type" content="text/html; charset=utf-8" />
+    <script src="./static/jquery-1.11.1.min.js"></script>
+    <script src="./static/bootstrap/js/bootstrap.min.js"></script>
+    <script src="./static/webuploader/webuploader.min.js"></script>
+    <link rel="stylesheet" type="text/css" href="./static/webuploader/webuploader.css">
+    <link rel="stylesheet" type="text/css" href="./static/bootstrap/css/bootstrap.min.css">
+    <link rel="stylesheet" type="text/css" href="./static/model.css">
+    <script type="text/javascript" src="/static/js/hashmap.js"></script>
+
+</head>
+<body>
+    <div style="margin:50px 0 0 50px;">
+
+        <div id="dndArea" class="placeholder" style="width:300px;margin-top:5px;height:300px;border:3px solid #00F">
+            <div id="picker" >请选择</div>
+            <button class="upload_button progress">上传列表</button>
+        </div>
+          <div class="model-box">
+                    <div class="content">
+                        <div class="title">
+                            <span>进度查看</span>
+                            <i class="close">×</i>
+                        </div>
+                      <div id="thelist" class="row"></div>
+                        <div id="botton" style="position: absolute;
+                                                bottom: 0;
+                                                left: 50%;
+                                                transform: translate(-50%, -50%);">
+                        <button id="ctlBtn" class="btn btn-default">开始上传</button>
+                        <p id="uploaddata"></p>
+                            </div>
+                    </div>
+                </div>
+        <div style="clear:both;"></div>
+    </div>
+
+    <script type="text/javascript">
+
+        var count =0;
+    $(document).ready(function() {
+        var file_list_finish;
+
+        WebUploader.Uploader.register({
+            "before-send":"beforeSend",  //每个分片上传前
+        },
+        {
+            beforeSend:function(block){  //如果有分块上传，则每个分块上传之前调用此函数
+                var deferred = WebUploader.Deferred();
+                block_name = block.file.wholeMd5 + block.chunk;
+                console.log(block_name);
+                for (var i=0;i<file_list_finish.length;i++)
+                {
+                    console.log(file_list_finish[i]);
+                    if (file_list_finish[i] == block_name){
+                        //取消分片发送
+                        deferred.reject();
+                        console.log("取消发送");
+                        break;
+                    }
+                }
+                deferred.resolve();
+                return deferred.promise();
+            }
+        });
+
+
+        //点击选择，获取所有文件名称
+        $("#picker").on("click",function(){
+            $.ajax({
+                url: "/check",   //对应flask中的路由
+                type: "POST", //请求方法
+                data: 'POST TEST',   //传送的数据
+                dataType: "json", //传送的数据类型
+                success: function (data) {  //成功得到返回数据后回调的函数
+                    file_list_finish = data.file_list.toString().split(',');
+                    //alert(typeof(file_list_finish));
+                }
+
+            })
+        });
+
+        //var task_id = WebUploader.Base.guid(); // 产生文件唯一标识符task_id  //
+        var task_id = 3;
+        //var md5 = {};
+        var uploader = WebUploader.create({
+            swf: './static/webuploader/Uploader.swf',
+            server: '{{ url_for("upload_part") }}', // 上传分片地址
+            pick: '#picker',
+            dnd:"#dndArea",
+            disableGlobalDnd:true,
+            auto: false, // 是否选择完即上传
+            multiple:true,
+            chunked: true,
+            chunkSize: 20 * 1024 * 1024,
+            chunkRetry: 3,
+            threads: 30,
+            chunkRetry : 2, //如果某个分片由于网络问题出错，允许自动重传次数
+            duplicate: false,  // 不允许重复上传
+            formData: { // 上传分片的http请求中一同携带的数据
+                //task_id: task_id,
+            },
+        });
+
+
+        //文件队列
+        uploader.on( 'fileQueued', function( file ) {
+            console.log(file);
+            count++;
+            var $list=$("#thelist");
+            $list.append( '<li id="' + file.id + '" class="file-item">' +
+            '<h4 class="info">' + file.name + '</h4>' +'<p class="md5"></p>'+
+            '<p class="state" state="unupload">等待上传...</p>'+'<a class="remove-this" href="javascript:;">取消上传(删除)</a>'+
+                '<div id="progress" class="progress" style="width:500px;float:left;margin:10px 0 0 20px;">' +
+                '            <div class="progress-bar progress-bar-striped active" role="progressbar" style="width:0%;"></div>' +
+                '        </div> '+
+            '</li>' );
+            uploader.md5File( file )// 及时显示进度
+            .progress(function(percentage) {
+              $( '#'+file.id ).find('.md5').text('读取文件：'+parseInt(percentage*100)+"%");
+            })
+            // 完成
+            .then(function(val) {
+                file.wholeMd5 = val;
+              $( '#'+file.id ).find('.md5').text('md5值：' + val);
+              $( '#'+file.id ).find('.state').text('等待上传...');
+            });
+            $list.on('click','.remove-this',function(){
+                if ($(this).parents(".file-item").attr('id') == file.id) {
+                    uploader.removeFile(file);
+                    $(this).parents(".file-item").remove();
+                    $('#progress').hide();
+                }
+			})
+        });
+         uploader.on("uploadBeforeSend", function (block, data) {
+           // block为分块数据。
+           console.log(block);
+           console.log(data);
+
+           // file为分块对应的file对象。
+           var file = block.file;
+           var fileMd5 = file.wholeMd5;
+
+           // 修改data可以控制发送哪些携带数据。
+           // 将存在file对象中的md5数据携带发送过去。
+
+           data.chunk = block.chunk;
+           data.chunks = block.chunks;
+           data.task_id = fileMd5; //md5,文件的MD5值
+           data.id = file.id;//文件ID
+           data.fileName = file.name;//文件名称
+           // data.file = file;//当前所传分片
+
+           data.type = 0;
+
+           // 删除其他数据(默认的上传字段)
+           delete data.lastModifiedDate;
+           delete data.size;
+           delete data.name;
+       });
+                //上传按钮
+        $("#ctlBtn").on("click",function(){
+            if($("#ctlBtn").text() == "开始上传"){
+                files_p = $("p[state=unupload]")
+                if(files_p.length <= 0){
+                    alert("上传列表为空");
+                    return false;
+                }
+                uploader.upload();
+                $("#ctlBtn").text("暂停上传");
+            }else{
+                 uploader.stop(true);
+                 $("#ctlBtn").text("开始上传");
+            }
+        });
+        function uploadStatus(){
+             var text = '';
+
+             var stats = uploader.getStats();
+
+            text = '共' + count + '个文件' +
+                    '，已上传' + stats.successNum + '个文件';
+            if(stats.uploadFailNum){
+                text += ',失败'+stats.uploadFailNum+'个文件';
+            }
+            console.log(text);
+            $("#uploaddata").text(text);
+        }
+
+        uploader.on('startUpload', function() {//开始上传时，调用该方法
+            $('#' + file.id).find('.progress-bar').css('width', '0%');
+            $('#' + file.id).find('.progress-bar').text('0%');
+            $('#' + file.id).find('.progress-bar').removeClass('progress-bar-danger progress-bar-success');
+            $('#' + file.id).find('.progress-bar').addClass('active progress-bar-striped');
+        });
+
+        uploader.on('uploadProgress', function(file, percentage) { // 一个分片上传成功后，调用该方法
+            $('#' + file.id).find('.state').text('上传中');
+            $('#' + file.id).find('.progress-bar').text(Math.round(percentage * 100) + '%');
+            $('#' + file.id).find('.progress-bar').css('width', percentage * 100 - 1 + '%');
+        });
+
+        uploader.on('uploadSuccess', function(file) { // 整个文件的所有分片都上传成功后，调用该方法
+            var data = { 'task_id': file.wholeMd5, 'filename': file.source['name'] };
+            $.get('{{ url_for("upload_success") }}', data);
+              $( '#'+file.id ).find('.progress-bar').css('width', '100%');
+             $( '#'+file.id ).find('.progress-bar').text('100%');
+              $( '#'+file.id ).find('.progress-bar').addClass('progress-bar-success');
+              $( '#'+file.id ).find('.progress-bar').text('上传完成');
+            $( '#'+file.id ).find('.state').text('已上传');
+            $( '#'+file.id ).find('.state').attr("state","upload");
+        });
+
+        uploader.on('uploadError', function(file) { // 上传过程中发生异常，调用该方法
+               $( '#'+file.id ).find('.progress-bar').css('width', '100%');
+           $( '#'+file.id ).find('.progress-bar').text('100%');
+            $( '#'+file.id ).find('.progress-bar').addClass('progress-bar-danger');
+            $( '#'+file.id ).find('.state').text('上传失败');
+            $( '#'+file.id ).find('.state').attr("state","upload");
+        });
+
+        uploader.on('uploadComplete', function(file) { // 上传结束，无论文件最终是否上传成功，该方法都会被调用
+              $( '#'+file.id ).find('.progress-bar').removeClass('active progress-bar-striped');
+            uploader.removeFile(file);
+            $("#ctlBtn").text("开始上传");
+            uploadStatus();
+        });
+
+
+    });
+
+    // 添加页面加载事件
+window.addEventListener("load", () => {
+	// 获取打开按钮
+	const open = document.querySelector('.upload_button.progress');
+	// 获取关闭按钮
+	const close = document.querySelector(".close");
+	// 获取整个大的模态框
+	const fillScreen = document.querySelector(".model-box");
+
+	// 获取模态框可移动的头部区域
+	const header = document.querySelector(".title");
+
+	// 获取模态框珠主区域
+	const modelBox = document.querySelector(".content");
+
+	// 做打开功能
+	open.addEventListener("click", () => {
+		// 点击打开按钮 改变display属性值
+		fillScreen.style.display = "block";
+	});
+
+	// 关闭功能
+	close.addEventListener("click", () => {
+		fillScreen.style.display = "none";
+	});
+
+	// 在做移动功能
+	// 为header添加鼠标按下事件
+	header.addEventListener("mousedown", (event) => {
+		// event 获取事件对象 每个元素都有 页面加载就给了
+		// 现在我们想让这个模态框移动 我们就得知道鼠标在header区域的光标位置 计算方式 是先算出鼠标光标在整个浏览器区域的位置 再算出模态框距离浏览器边缘位置的大小 相减就可以了
+		// event.pageX可以获取鼠标光标距离浏览器边缘位置的大小
+		// modelBox.offsetLeft 可以获取到模态框区里浏览器左边框的距离
+		// 上面(Y轴)同理
+		const x = event.pageX - modelBox.offsetLeft;
+		const y = event.pageY - modelBox.offsetTop;
+		console.log(x, y);
+		// 现在我们要移动模态框 由于在这个页面移动 并且实在按下之后移动 所有在按下事件内添加移动事件 并且是给document
+		document.addEventListener("mousemove", move);
+		// 这里我们待会有要做鼠标弹起事件 所以必须给一个写好的函数
+		function move(event) {
+			// 算出移动时的模态框的位置距离 并赋值 原理和上面求x,y一样
+			// css属性值需要单位 别忘了哦
+			modelBox.style.left = event.pageX - x + "px";
+			modelBox.style.top = event.pageY - y + "px";
+		}
+		// 现在要弹起鼠标 就移除事件 我先写完
+		// document.removeEventListener("mousemove", move); 这句 可以移除一个事件 那么在这里我们刚刚写的函数就起了作用 在移除一个事件的时候 事件源必须是同一个 所以我们必须指定用一个函数 不然就移除不了 可以自己同手试试哦 我赶时间 哈哈哈~~~
+		document.addEventListener("mouseup", () => {
+			document.removeEventListener("mousemove", move);
+		});
+	});
+});
+    </script>
+</body>
+</html>
